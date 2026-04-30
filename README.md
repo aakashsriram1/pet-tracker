@@ -79,8 +79,3 @@ Any health concern should be handled by a veterinarian. PawTrack's role is organ
 - Add non-diagnostic AI pattern flags
 - Define Pro features around exports, advanced history, and multi-pet power users
 
-## Resume Bullets
-
-- Designed a mobile-first pet health management app covering multi-pet profiles, medications, vaccinations, symptoms, diet, weight trends, reminders, vet records, and nearby vet access.
-- Added AI pattern-flagging concepts with strict non-diagnostic language, separating automated observations from licensed veterinary advice.
-- Framed the product around retention-focused workflows, privacy-conscious health-adjacent data, notifications, exports, and a freemium / Pro business model.
