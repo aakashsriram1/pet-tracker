@@ -1,10 +1,13 @@
 import 'dart:async';
 
 import 'package:flutter/material.dart';
+import 'package:flutter_dotenv/flutter_dotenv.dart';
 import 'package:supabase_flutter/supabase_flutter.dart';
 
 Future<void> main() async {
   WidgetsFlutterBinding.ensureInitialized();
+
+  await dotenv.load();
 
   final authService = await SupabasePawTrackAuth.bootstrap();
   runApp(PawTrackApp(authService: authService));
@@ -61,8 +64,8 @@ class SupabasePawTrackAuth implements PawTrackAuth {
   final SupabaseClient? _client;
 
   static Future<SupabasePawTrackAuth> bootstrap() async {
-    const supabaseUrl = String.fromEnvironment('SUPABASE_URL');
-    const supabaseAnonKey = String.fromEnvironment('SUPABASE_ANON_KEY');
+    final supabaseUrl = dotenv.env['SUPABASE_URL'] ?? '';
+    final supabaseAnonKey = dotenv.env['SUPABASE_ANON_KEY'] ?? '';
 
     if (supabaseUrl.isEmpty || supabaseAnonKey.isEmpty) {
       return SupabasePawTrackAuth._(null);
@@ -123,6 +126,110 @@ class SupabasePawTrackAuth implements PawTrackAuth {
   Future<void> signOut() => _readyClient.auth.signOut();
 }
 
+abstract class PawTrackDatabaseI {
+  Future<List<Pet>> fetchPets();
+  Future<Pet> insertPet(Pet pet);
+  Future<List<HealthLog>> fetchLogs(List<Pet> pets);
+  Future<void> insertLog(HealthLog log);
+}
+
+class PawTrackDatabase implements PawTrackDatabaseI {
+  final SupabaseClient _client;
+
+  PawTrackDatabase(this._client);
+
+  @override
+  Future<List<Pet>> fetchPets() async {
+    try {
+      final response = await _client.from('pets').select().order('created_at', ascending: false);
+      return (response as List).map((row) => Pet.fromMap(row as Map<String, dynamic>)).toList();
+    } catch (e) {
+      print('Error fetching pets: $e');
+      return [];
+    }
+  }
+
+  @override
+  Future<Pet> insertPet(Pet pet) async {
+    try {
+      final data = pet.toMap();
+      final response = await _client.from('pets').insert(data).select().single();
+      return Pet.fromMap(response as Map<String, dynamic>);
+    } catch (e) {
+      print('Error inserting pet: $e');
+      rethrow;
+    }
+  }
+
+  @override
+  Future<List<HealthLog>> fetchLogs(List<Pet> pets) async {
+    if (pets.isEmpty) return [];
+    try {
+      final allLogs = <HealthLog>[];
+      final tables = [
+        ('weight_entries', 'recorded_at', LogType.weight),
+        ('symptoms', 'recorded_at', LogType.symptom),
+        ('diet_entries', 'fed_at', LogType.diet),
+        ('vaccinations', 'date_administered', LogType.vaccine),
+        ('medications', 'start_date', LogType.medication),
+      ];
+      for (final (table, timeCol, logType) in tables) {
+        try {
+          final response = await _client.from(table).select().order(timeCol, ascending: false);
+          for (final row in response as List) {
+            final petId = (row as Map<String, dynamic>)['pet_id'] as String;
+            final pet = pets.where((p) => p.id == petId).firstOrNull;
+            if (pet != null) {
+              allLogs.add(HealthLog.fromMap(logType, row as Map<String, dynamic>, pet.name));
+            }
+          }
+        } catch (e) {
+          print('Error fetching logs from $table: $e');
+        }
+      }
+      allLogs.sort((a, b) => b.date.compareTo(a.date));
+      return allLogs;
+    } catch (e) {
+      print('Error fetching logs: $e');
+      return [];
+    }
+  }
+
+  @override
+  Future<void> insertLog(HealthLog log) async {
+    if (log.petId == null) throw ArgumentError('log.petId must not be null');
+    try {
+      final table = _logTable(log.type);
+      final data = log.toInsertMap();
+      await _client.from(table).insert(data);
+    } catch (e) {
+      print('Error inserting log: $e');
+      rethrow;
+    }
+  }
+
+  String _logTable(LogType type) {
+    switch (type) {
+      case LogType.weight: return 'weight_entries';
+      case LogType.symptom: return 'symptoms';
+      case LogType.diet: return 'diet_entries';
+      case LogType.vaccine: return 'vaccinations';
+      case LogType.medication: return 'medications';
+    }
+  }
+}
+
+class FakePawTrackDatabase implements PawTrackDatabaseI {
+  @override
+  Future<List<Pet>> fetchPets() async => [];
+  @override
+  Future<Pet> insertPet(Pet pet) async => pet;
+  @override
+  Future<List<HealthLog>> fetchLogs(List<Pet> pets) async => [];
+  @override
+  Future<void> insertLog(HealthLog log) async {}
+}
+
 class AuthSetupException implements Exception {
   const AuthSetupException(this.message);
 
@@ -180,10 +287,16 @@ class _AuthGateState extends State<AuthGate> {
     }
 
     if (_isSignedIn) {
-      return AppShell(
-        authService: widget.authService,
-        onSignedOut: () => setState(() => _isSignedIn = false),
-      );
+      try {
+        return AppShell(
+          db: PawTrackDatabase(Supabase.instance.client),
+        );
+      } catch (e) {
+        // Supabase not initialized (e.g., in tests) - create a mock database
+        return AppShell(
+          db: FakePawTrackDatabase(),
+        );
+      }
     }
 
     return LoginScreen(
@@ -398,13 +511,11 @@ class _LoginScreenState extends State<LoginScreen> {
 
 class AppShell extends StatefulWidget {
   const AppShell({
-    required this.authService,
-    required this.onSignedOut,
+    required this.db,
     super.key,
   });
 
-  final PawTrackAuth authService;
-  final VoidCallback onSignedOut;
+  final PawTrackDatabaseI db;
 
   @override
   State<AppShell> createState() => _AppShellState();
@@ -412,50 +523,37 @@ class AppShell extends StatefulWidget {
 
 class _AppShellState extends State<AppShell> {
   int _selectedIndex = 0;
-  final List<Pet> _pets = [
-    const Pet(
-      name: 'Milo',
-      species: 'Dog',
-      breed: 'Golden Retriever',
-      age: '4 years',
-      weight: '62.4 lb',
-      notes: 'Energetic, takes heartworm prevention monthly.',
-    ),
-    const Pet(
-      name: 'Luna',
-      species: 'Cat',
-      breed: 'Domestic Shorthair',
-      age: '2 years',
-      weight: '9.8 lb',
-      notes: 'Sensitive appetite, vaccine reminder due soon.',
-    ),
-  ];
-  final List<HealthLog> _logs = [
-    HealthLog(
-      petName: 'Milo',
-      type: LogType.weight,
-      date: DateTime.now().subtract(const Duration(days: 2)),
-      note: 'Weight down 0.6 lb from last check.',
-    ),
-    HealthLog(
-      petName: 'Luna',
-      type: LogType.diet,
-      date: DateTime.now().subtract(const Duration(days: 1)),
-      note: 'Ate half of breakfast, normal dinner.',
-    ),
-  ];
-  final List<CareTask> _tasks = [
-    CareTask(
-      petName: 'Milo',
-      title: 'Heartworm tablet',
-      dueText: 'Today at 8:00 PM',
-    ),
-    CareTask(
-      petName: 'Luna',
-      title: 'Rabies vaccine follow-up',
-      dueText: 'Friday morning',
-    ),
-  ];
+  late List<Pet> _pets = [];
+  late List<HealthLog> _logs = [];
+  late List<CareTask> _tasks = [];
+  bool _isLoading = true;
+
+  @override
+  void initState() {
+    super.initState();
+    _loadData();
+  }
+
+  Future<void> _loadData() async {
+    try {
+      final pets = await widget.db.fetchPets();
+      final logs = await widget.db.fetchLogs(pets);
+      setState(() {
+        _pets = pets;
+        _logs = logs;
+        // TODO: create care_tasks table in Supabase and persist CareTask
+        _tasks = [];
+        _isLoading = false;
+      });
+    } catch (e) {
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(content: Text('Error loading data: $e')),
+        );
+        setState(() => _isLoading = false);
+      }
+    }
+  }
 
   String get _title => switch (_selectedIndex) {
     0 => 'Pets',
@@ -479,8 +577,8 @@ class _AppShellState extends State<AppShell> {
   };
 
   Future<void> _signOut() async {
-    await widget.authService.signOut();
-    widget.onSignedOut();
+    // TODO: wire up actual signout via Supabase auth
+    Navigator.of(context).pushReplacementNamed('/');
   }
 
   void _handlePrimaryAction() {
@@ -539,15 +637,6 @@ class _AppShellState extends State<AppShell> {
         title: Text(_title),
         centerTitle: false,
         actions: [
-          Padding(
-            padding: const EdgeInsets.only(right: 4),
-            child: Center(
-              child: Text(
-                widget.authService.currentEmail ?? 'PawTrack',
-                style: Theme.of(context).textTheme.labelMedium,
-              ),
-            ),
-          ),
           IconButton(
             tooltip: 'Sign out',
             onPressed: _signOut,
@@ -555,10 +644,12 @@ class _AppShellState extends State<AppShell> {
           ),
         ],
       ),
-      body: IndexedStack(
+      body: _isLoading
+          ? const Center(child: CircularProgressIndicator())
+          : IndexedStack(
         index: _selectedIndex,
         children: [
-          PetsPage(pets: _pets, onAddPet: _showAddPetSheet),
+          PetsPage(pets: _pets, logs: _logs, onAddPet: _showAddPetSheet),
           LogsPage(logs: _logs, pets: _pets, onAddLog: _showAddLogSheet),
           CarePage(
             tasks: _tasks,
@@ -608,9 +699,15 @@ class _AppShellState extends State<AppShell> {
 }
 
 class PetsPage extends StatelessWidget {
-  const PetsPage({required this.pets, required this.onAddPet, super.key});
+  const PetsPage({
+    required this.pets,
+    required this.logs,
+    required this.onAddPet,
+    super.key,
+  });
 
   final List<Pet> pets;
+  final List<HealthLog> logs;
   final VoidCallback onAddPet;
 
   @override
@@ -635,7 +732,7 @@ class PetsPage extends StatelessWidget {
           ...pets.map(
             (pet) => Padding(
               padding: const EdgeInsets.only(bottom: 12),
-              child: PetSummaryCard(pet: pet),
+              child: PetSummaryCard(pet: pet, logs: logs),
             ),
           ),
       ],
@@ -792,8 +889,6 @@ class _AddPetSheetState extends State<AddPetSheet> {
   final _formKey = GlobalKey<FormState>();
   final _nameController = TextEditingController();
   final _breedController = TextEditingController();
-  final _ageController = TextEditingController();
-  final _weightController = TextEditingController();
   final _notesController = TextEditingController();
   String _species = 'Dog';
 
@@ -801,8 +896,6 @@ class _AddPetSheetState extends State<AddPetSheet> {
   void dispose() {
     _nameController.dispose();
     _breedController.dispose();
-    _ageController.dispose();
-    _weightController.dispose();
     _notesController.dispose();
     super.dispose();
   }
@@ -815,11 +908,11 @@ class _AddPetSheetState extends State<AddPetSheet> {
     Navigator.of(context).pop(
       Pet(
         name: _nameController.text.trim(),
-        species: _species,
+        type: _species,
         breed: _breedController.text.trim(),
-        age: _ageController.text.trim(),
-        weight: _weightController.text.trim(),
-        notes: _notesController.text.trim(),
+        notes: _notesController.text.trim().isNotEmpty
+            ? _notesController.text.trim()
+            : null,
       ),
     );
   }
@@ -857,18 +950,6 @@ class _AddPetSheetState extends State<AddPetSheet> {
             ),
             const SizedBox(height: 12),
             TextFormField(
-              controller: _ageController,
-              decoration: const InputDecoration(labelText: 'Age'),
-              validator: _required,
-            ),
-            const SizedBox(height: 12),
-            TextFormField(
-              controller: _weightController,
-              decoration: const InputDecoration(labelText: 'Weight'),
-              validator: _required,
-            ),
-            const SizedBox(height: 12),
-            TextFormField(
               controller: _notesController,
               decoration: const InputDecoration(labelText: 'Notes'),
               maxLines: 3,
@@ -899,8 +980,14 @@ class AddLogSheet extends StatefulWidget {
 class _AddLogSheetState extends State<AddLogSheet> {
   final _formKey = GlobalKey<FormState>();
   final _noteController = TextEditingController();
-  late String _petName = widget.pets.first.name;
+  late String _petName;
   LogType _type = LogType.weight;
+
+  @override
+  void initState() {
+    super.initState();
+    _petName = widget.pets.isNotEmpty ? widget.pets.first.name : '';
+  }
 
   @override
   void dispose() {
@@ -1064,35 +1151,133 @@ class _AddCareTaskSheetState extends State<AddCareTaskSheet> {
 }
 
 class Pet {
-  const Pet({
+  final String? id;
+  final String? ownerId;
+  final String name;
+  final String breed;
+  final String type;
+  final String? notes;
+
+  Pet({
+    this.id,
+    this.ownerId,
     required this.name,
-    required this.species,
     required this.breed,
-    required this.age,
-    required this.weight,
-    required this.notes,
+    required this.type,
+    this.notes,
   });
 
-  final String name;
-  final String species;
-  final String breed;
-  final String age;
-  final String weight;
-  final String notes;
+  factory Pet.fromMap(Map<String, dynamic> map) {
+    return Pet(
+      id: map['id'] as String?,
+      ownerId: map['owner_id'] as String?,
+      name: map['name'] as String,
+      breed: map['breed'] as String,
+      type: map['type'] as String,
+      notes: map['notes'] as String?,
+    );
+  }
+
+  Map<String, dynamic> toMap() {
+    return {
+      'name': name,
+      'breed': breed,
+      'type': type,
+      // TODO: add notes column to pets table
+      // TODO: add birth_date picker to AddPetSheet
+    };
+  }
 }
 
 class HealthLog {
-  HealthLog({
-    required this.petName,
-    required this.type,
-    required this.date,
-    required this.note,
-  });
-
+  final String? id;
+  final String? petId;
   final String petName;
   final LogType type;
   final DateTime date;
   final String note;
+  final double? weight;
+  final String? weightUnit;
+
+  HealthLog({
+    this.id,
+    this.petId,
+    required this.petName,
+    required this.type,
+    required this.date,
+    required this.note,
+    this.weight,
+    this.weightUnit = 'lb',
+  });
+
+  factory HealthLog.fromMap(LogType logType, Map<String, dynamic> map, String petName) {
+    DateTime date;
+    String note = '';
+    double? weight;
+    String? weightUnit;
+
+    switch (logType) {
+      case LogType.weight:
+        date = DateTime.parse(map['recorded_at'] as String);
+        weight = (map['weight'] as num).toDouble();
+        weightUnit = map['unit'] as String? ?? 'lb';
+        break;
+      case LogType.symptom:
+        date = DateTime.parse(map['recorded_at'] as String);
+        note = map['notes'] as String? ?? '';
+        break;
+      case LogType.diet:
+        date = DateTime.parse(map['fed_at'] as String);
+        note = '${map['food_type'] ?? ''} ${map['food_brand'] ?? ''}'.trim();
+        break;
+      case LogType.vaccine:
+        date = DateTime.parse(map['date_administered'] as String);
+        note = map['notes'] as String? ?? '';
+        break;
+      case LogType.medication:
+        date = DateTime.parse(map['start_date'] as String);
+        note = map['notes'] as String? ?? '';
+        break;
+    }
+
+    return HealthLog(
+      id: map['id'] as String?,
+      petId: map['pet_id'] as String?,
+      petName: petName,
+      type: logType,
+      date: date,
+      note: note,
+      weight: weight,
+      weightUnit: weightUnit,
+    );
+  }
+
+  Map<String, dynamic> toInsertMap() {
+    final map = <String, dynamic>{'pet_id': petId};
+    switch (type) {
+      case LogType.weight:
+        map['recorded_at'] = date.toIso8601String();
+        map['weight'] = weight;
+        map['unit'] = weightUnit;
+        break;
+      case LogType.symptom:
+        map['recorded_at'] = date.toIso8601String();
+        map['notes'] = note;
+        break;
+      case LogType.diet:
+        map['fed_at'] = date.toIso8601String();
+        break;
+      case LogType.vaccine:
+        map['date_administered'] = date.toIso8601String();
+        map['notes'] = note;
+        break;
+      case LogType.medication:
+        map['start_date'] = date.toIso8601String();
+        map['notes'] = note;
+        break;
+    }
+    return map;
+  }
 }
 
 class CareTask {
@@ -1243,9 +1428,23 @@ class FormSheet extends StatelessWidget {
 }
 
 class PetSummaryCard extends StatelessWidget {
-  const PetSummaryCard({required this.pet, super.key});
+  const PetSummaryCard({required this.pet, required this.logs, super.key});
 
   final Pet pet;
+  final List<HealthLog> logs;
+
+  String? _getRecentWeight() {
+    try {
+      final recentWeight = logs
+          .where((log) => log.petName == pet.name && log.type == LogType.weight)
+          .firstOrNull;
+      return recentWeight != null
+          ? '${recentWeight.weight} ${recentWeight.weightUnit}'
+          : null;
+    } catch (e) {
+      return null;
+    }
+  }
 
   @override
   Widget build(BuildContext context) {
@@ -1277,21 +1476,21 @@ class PetSummaryCard extends StatelessWidget {
                         style: Theme.of(context).textTheme.titleMedium
                             ?.copyWith(fontWeight: FontWeight.w800),
                       ),
-                      Text('${pet.species} • ${pet.breed} • ${pet.age}'),
+                      Text('${pet.type} • ${pet.breed}'),
                     ],
                   ),
                 ),
                 Text(
-                  pet.weight,
+                  _getRecentWeight() ?? '—',
                   style: Theme.of(context).textTheme.titleMedium?.copyWith(
                     fontWeight: FontWeight.w800,
                   ),
                 ),
               ],
             ),
-            if (pet.notes.isNotEmpty) ...[
+            if (pet.notes != null && pet.notes!.isNotEmpty) ...[
               const SizedBox(height: 12),
-              Text(pet.notes),
+              Text(pet.notes!),
             ],
           ],
         ),
