@@ -290,11 +290,13 @@ class _AuthGateState extends State<AuthGate> {
       try {
         return AppShell(
           db: PawTrackDatabase(Supabase.instance.client),
+          authService: widget.authService,
         );
       } catch (e) {
         // Supabase not initialized (e.g., in tests) - create a mock database
         return AppShell(
           db: FakePawTrackDatabase(),
+          authService: widget.authService,
         );
       }
     }
@@ -512,10 +514,12 @@ class _LoginScreenState extends State<LoginScreen> {
 class AppShell extends StatefulWidget {
   const AppShell({
     required this.db,
+    required this.authService,
     super.key,
   });
 
   final PawTrackDatabaseI db;
+  final PawTrackAuth authService;
 
   @override
   State<AppShell> createState() => _AppShellState();
@@ -571,8 +575,7 @@ class _AppShellState extends State<AppShell> {
   };
 
   Future<void> _signOut() async {
-    // TODO: wire up actual signout via Supabase auth
-    Navigator.of(context).pushReplacementNamed('/');
+    await widget.authService.signOut();
   }
 
   void _handlePrimaryAction() {
