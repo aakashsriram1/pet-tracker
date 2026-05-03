@@ -84,14 +84,58 @@ void main() {
     await tester.pumpWidget(PawTrackApp(authService: authService));
     await tester.pumpAndSettle();
 
-    // TODO: wire up signout to Supabase auth stream and enable this test
-    // await tester.tap(find.byTooltip('Sign out'));
-    // await tester.pumpAndSettle();
-    // expect(find.text('Sign in to PawTrack'), findsOneWidget);
+    await tester.tap(find.byTooltip('Sign out'));
+    await tester.pumpAndSettle();
 
-    // For now, just verify the logout button exists
-    expect(find.byTooltip('Sign out'), findsOneWidget);
+    expect(find.text('Sign in to PawTrack'), findsOneWidget);
   });
+
+  testWidgets('add pet shows error snackbar when DB save fails', (tester) async {
+    await tester.pumpWidget(
+      PawTrackApp(
+        authService: FakeAuthService(initiallySignedIn: true),
+        db: FailingFakePawTrackDatabase(),
+      ),
+    );
+    await tester.pumpAndSettle();
+
+    await tester.tap(find.byTooltip('Add pet'));
+    await tester.pumpAndSettle();
+
+    await tester.enterText(find.byKey(const Key('pet-name-field')), 'Buddy');
+    await tester.enterText(find.widgetWithText(TextFormField, 'Breed'), 'Beagle');
+    await tester.tap(find.byKey(const Key('save-pet')));
+    await tester.pumpAndSettle();
+
+    expect(find.text('Failed to save pet. Please try again.'), findsOneWidget);
+    expect(find.text('Buddy'), findsNothing);
+  });
+
+  testWidgets('dismissing add pet form does not add a pet', (tester) async {
+    await tester.pumpWidget(
+      PawTrackApp(authService: FakeAuthService(initiallySignedIn: true)),
+    );
+    await tester.pumpAndSettle();
+
+    await tester.tap(find.byTooltip('Add pet'));
+    await tester.pumpAndSettle();
+
+    await tester.tap(find.byIcon(Icons.close));
+    await tester.pumpAndSettle();
+
+    expect(find.text('No pets yet'), findsOneWidget);
+  });
+}
+
+class FailingFakePawTrackDatabase implements PawTrackDatabaseI {
+  @override
+  Future<List<Pet>> fetchPets() async => [];
+  @override
+  Future<Pet> insertPet(Pet pet) async => throw Exception('DB error');
+  @override
+  Future<List<HealthLog>> fetchLogs(List<Pet> pets) async => [];
+  @override
+  Future<void> insertLog(HealthLog log) async {}
 }
 
 class FakeAuthService implements PawTrackAuth {

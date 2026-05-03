@@ -14,9 +14,10 @@ Future<void> main() async {
 }
 
 class PawTrackApp extends StatelessWidget {
-  const PawTrackApp({required this.authService, super.key});
+  const PawTrackApp({required this.authService, this.db, super.key});
 
   final PawTrackAuth authService;
+  final PawTrackDatabaseI? db;
 
   @override
   Widget build(BuildContext context) {
@@ -43,7 +44,7 @@ class PawTrackApp extends StatelessWidget {
         ),
         useMaterial3: true,
       ),
-      home: AuthGate(authService: authService),
+      home: AuthGate(authService: authService, db: db),
     );
   }
 }
@@ -240,9 +241,10 @@ class AuthSetupException implements Exception {
 }
 
 class AuthGate extends StatefulWidget {
-  const AuthGate({required this.authService, super.key});
+  const AuthGate({required this.authService, this.db, super.key});
 
   final PawTrackAuth authService;
+  final PawTrackDatabaseI? db;
 
   @override
   State<AuthGate> createState() => _AuthGateState();
@@ -287,6 +289,9 @@ class _AuthGateState extends State<AuthGate> {
     }
 
     if (_isSignedIn) {
+      if (widget.db != null) {
+        return AppShell(db: widget.db!, authService: widget.authService);
+      }
       try {
         return AppShell(
           db: PawTrackDatabase(Supabase.instance.client),

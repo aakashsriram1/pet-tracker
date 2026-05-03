@@ -49,6 +49,28 @@ void main() {
     // cleanup
     await client.from('pets').delete().eq('id', saved.id!);
   });
+
+  test('insertPet saves notes and returns pet with id', () async {
+    final db = PawTrackDatabase(client);
+    final pet = Pet(name: '__test_notes__', breed: 'Poodle', type: 'Dog', notes: 'test notes');
+    final saved = await db.insertPet(pet);
+
+    expect(saved.id, isNotNull);
+    expect(saved.notes, 'test notes');
+
+    await client.from('pets').delete().eq('id', saved.id!);
+  });
+
+  test('insertPet without notes succeeds', () async {
+    final db = PawTrackDatabase(client);
+    final pet = Pet(name: '__test_nonotes__', breed: 'Poodle', type: 'Dog');
+    final saved = await db.insertPet(pet);
+
+    expect(saved.id, isNotNull);
+    expect(saved.notes, isNull);
+
+    await client.from('pets').delete().eq('id', saved.id!);
+  });
 }
 
 class _InMemoryAsyncStorage extends GotrueAsyncStorage {
