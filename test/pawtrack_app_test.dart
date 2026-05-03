@@ -69,14 +69,15 @@ void main() {
     await tester.tap(find.byTooltip('Add log'));
     await tester.pumpAndSettle();
 
+    // Add a weight log (default type)
     await tester.enterText(
-      find.byKey(const Key('log-note-field')),
-      'Ate breakfast and finished medication.',
+      find.byKey(const Key('log-weight-field')),
+      '25.5',
     );
     await tester.tap(find.byKey(const Key('save-log')));
     await tester.pumpAndSettle();
 
-    expect(find.textContaining('Ate breakfast'), findsOneWidget);
+    expect(find.textContaining('25.5'), findsOneWidget);
   });
 
   testWidgets('logout returns to login', (tester) async {
@@ -125,6 +126,154 @@ void main() {
 
     expect(find.text('No pets yet'), findsOneWidget);
   });
+
+
+  // B — Add Pet form tests
+  testWidgets('B1: add pet with name and breed only (notes optional)', (tester) async {
+    await tester.pumpWidget(
+      PawTrackApp(authService: FakeAuthService(initiallySignedIn: true)),
+    );
+    await tester.pumpAndSettle();
+
+    await tester.tap(find.byTooltip('Add pet'));
+    await tester.pumpAndSettle();
+
+    await tester.enterText(find.byKey(const Key('pet-name-field')), 'Max');
+    await tester.enterText(find.widgetWithText(TextFormField, 'Breed'), 'Golden Retriever');
+    await tester.tap(find.byKey(const Key('save-pet')));
+    await tester.pumpAndSettle();
+
+    expect(find.text('Max'), findsOneWidget);
+    expect(find.text('Dog • Golden Retriever'), findsOneWidget);
+  });
+
+  testWidgets('B2: saving without a name shows validation error', (tester) async {
+    await tester.pumpWidget(
+      PawTrackApp(authService: FakeAuthService(initiallySignedIn: true)),
+    );
+    await tester.pumpAndSettle();
+
+    await tester.tap(find.byTooltip('Add pet'));
+    await tester.pumpAndSettle();
+
+    await tester.enterText(find.widgetWithText(TextFormField, 'Breed'), 'Poodle');
+    await tester.tap(find.byKey(const Key('save-pet')));
+    await tester.pump();
+
+    expect(find.text('Required.'), findsWidgets);
+  });
+
+  testWidgets('B3: saving without a breed shows validation error', (tester) async {
+    await tester.pumpWidget(
+      PawTrackApp(authService: FakeAuthService(initiallySignedIn: true)),
+    );
+    await tester.pumpAndSettle();
+
+    await tester.tap(find.byTooltip('Add pet'));
+    await tester.pumpAndSettle();
+
+    await tester.enterText(find.byKey(const Key('pet-name-field')), 'Fluffy');
+    await tester.tap(find.byKey(const Key('save-pet')));
+    await tester.pump();
+
+    expect(find.text('Required.'), findsWidgets);
+  });
+
+  testWidgets('B4: species dropdown defaults to Dog', (tester) async {
+    await tester.pumpWidget(
+      PawTrackApp(authService: FakeAuthService(initiallySignedIn: true)),
+    );
+    await tester.pumpAndSettle();
+
+    await tester.tap(find.byTooltip('Add pet'));
+    await tester.pumpAndSettle();
+
+    expect(find.text('Dog'), findsOneWidget);
+  });
+
+  testWidgets('B5: species can be changed to Cat', (tester) async {
+    await tester.pumpWidget(
+      PawTrackApp(authService: FakeAuthService(initiallySignedIn: true)),
+    );
+    await tester.pumpAndSettle();
+
+    await tester.tap(find.byTooltip('Add pet'));
+    await tester.pumpAndSettle();
+
+    await tester.tap(find.byType(DropdownButtonFormField<String>).first);
+    await tester.pumpAndSettle();
+    await tester.tap(find.text('Cat').last);
+    await tester.pumpAndSettle();
+
+    await tester.enterText(find.byKey(const Key('pet-name-field')), 'Whiskers');
+    await tester.enterText(find.widgetWithText(TextFormField, 'Breed'), 'Siamese');
+    await tester.tap(find.byKey(const Key('save-pet')));
+    await tester.pumpAndSettle();
+
+    expect(find.text('Cat • Siamese'), findsOneWidget);
+  });
+
+  // C — Add Log form tests
+  testWidgets('C2: weight log missing weight shows validation error', (tester) async {
+    await tester.pumpWidget(
+      PawTrackApp(authService: FakeAuthService(initiallySignedIn: true)),
+    );
+    await tester.pumpAndSettle();
+
+    await tester.tap(find.text('Logs'));
+    await tester.pumpAndSettle();
+    await tester.tap(find.byTooltip('Add log'));
+    await tester.pumpAndSettle();
+
+    await tester.tap(find.byKey(const Key('save-log')));
+    await tester.pump();
+
+    expect(find.text('Required.'), findsWidgets);
+  });
+
+
+
+
+  testWidgets('C17: dismissing add log form does not add a log', (tester) async {
+    await tester.pumpWidget(
+      PawTrackApp(authService: FakeAuthService(initiallySignedIn: true)),
+    );
+    await tester.pumpAndSettle();
+
+    await tester.tap(find.text('Logs'));
+    await tester.pumpAndSettle();
+
+    expect(find.text('No logs yet'), findsOneWidget);
+
+    await tester.tap(find.byTooltip('Add log'));
+    await tester.pumpAndSettle();
+
+    await tester.tap(find.byIcon(Icons.close));
+    await tester.pumpAndSettle();
+
+    expect(find.text('No logs yet'), findsOneWidget);
+  });
+
+  testWidgets('C18: add log DB failure shows snackbar', (tester) async {
+    await tester.pumpWidget(
+      PawTrackApp(
+        authService: FakeAuthService(initiallySignedIn: true),
+        db: FailingFakeLogDatabase(),
+      ),
+    );
+    await tester.pumpAndSettle();
+
+    await tester.tap(find.text('Logs'));
+    await tester.pumpAndSettle();
+    await tester.tap(find.byTooltip('Add log'));
+    await tester.pumpAndSettle();
+
+    await tester.enterText(find.byKey(const Key('log-weight-field')), '20');
+    await tester.tap(find.byKey(const Key('save-log')));
+    await tester.pumpAndSettle();
+
+    expect(find.text('Failed to save log. Please try again.'), findsOneWidget);
+  });
 }
 
 class FailingFakePawTrackDatabase implements PawTrackDatabaseI {
@@ -136,6 +285,17 @@ class FailingFakePawTrackDatabase implements PawTrackDatabaseI {
   Future<List<HealthLog>> fetchLogs(List<Pet> pets) async => [];
   @override
   Future<void> insertLog(HealthLog log) async {}
+}
+
+class FailingFakeLogDatabase implements PawTrackDatabaseI {
+  @override
+  Future<List<Pet>> fetchPets() async => [];
+  @override
+  Future<Pet> insertPet(Pet pet) async => pet;
+  @override
+  Future<List<HealthLog>> fetchLogs(List<Pet> pets) async => [];
+  @override
+  Future<void> insertLog(HealthLog log) async => throw Exception('DB error');
 }
 
 class FakeAuthService implements PawTrackAuth {

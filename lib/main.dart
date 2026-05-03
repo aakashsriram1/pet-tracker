@@ -622,8 +622,17 @@ class _AppShellState extends State<AppShell> {
       builder: (_) => AddLogSheet(pets: _pets),
     );
 
-    if (log != null) {
+    if (log == null) return;
+
+    try {
+      await widget.db.insertLog(log);
       setState(() => _logs.insert(0, log));
+    } catch (e) {
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(content: Text('Failed to save log. Please try again.')),
+        );
+      }
     }
   }
 
@@ -910,34 +919,118 @@ class AddLogSheet extends StatefulWidget {
 class _AddLogSheetState extends State<AddLogSheet> {
   final _formKey = GlobalKey<FormState>();
   final _noteController = TextEditingController();
-  late String _petName;
+  late Pet _selectedPet;
   LogType _type = LogType.weight;
+
+  // Type-specific controllers
+  final _weightController = TextEditingController();
+  final _medicationNameController = TextEditingController();
+  final _doseController = TextEditingController();
+  final _frequencyController = TextEditingController();
+  final _vaccineNameController = TextEditingController();
+  final _foodTypeController = TextEditingController();
+  final _foodBrandController = TextEditingController();
+  final _portionSizeController = TextEditingController();
+  final _portionUnitController = TextEditingController();
+
+  // Date/time state
+  DateTime _logDate = DateTime.now();
+  DateTime _vaccineDate = DateTime.now();
+  DateTime? _nextDueDate;
+  DateTime _medStartDate = DateTime.now();
+  DateTime? _medEndDate;
+
+  String _weightUnit = 'lb';
+  final Set<String> _selectedTags = {};
+  final _symptomTags = ['vomiting', 'lethargy', 'appetite loss', 'diarrhea', 'coughing', 'sneezing', 'limping'];
 
   @override
   void initState() {
     super.initState();
-    _petName = widget.pets.isNotEmpty ? widget.pets.first.name : '';
+    _selectedPet = widget.pets.isNotEmpty ? widget.pets.first : Pet(name: '', breed: '', type: 'Dog');
   }
 
   @override
   void dispose() {
     _noteController.dispose();
+    _weightController.dispose();
+    _medicationNameController.dispose();
+    _doseController.dispose();
+    _frequencyController.dispose();
+    _vaccineNameController.dispose();
+    _foodTypeController.dispose();
+    _foodBrandController.dispose();
+    _portionSizeController.dispose();
+    _portionUnitController.dispose();
     super.dispose();
   }
+
+  Future<DateTime?> _pickDateTime(DateTime initial) async {
+    final date = await showDatePicker(
+      context: context,
+      initialDate: initial,
+      firstDate: DateTime(2000),
+      lastDate: DateTime(2100),
+    );
+    if (date == null) return null;
+    if (!mounted) return null;
+    final time = await showTimePicker(
+      context: context,
+      initialTime: TimeOfDay.fromDateTime(initial),
+    );
+    if (time == null) return date;
+    return DateTime(date.year, date.month, date.day, time.hour, time.minute);
+  }
+
+  Future<DateTime?> _pickDate(DateTime initial) async {
+    return await showDatePicker(
+      context: context,
+      initialDate: initial,
+      firstDate: DateTime(2000),
+      lastDate: DateTime(2100),
+    );
+  }
+
+  String _formatDate(DateTime dt) =>
+      '${dt.year}-${dt.month.toString().padLeft(2, '0')}-${dt.day.toString().padLeft(2, '0')}';
+
+  String _formatDateTime(DateTime dt) =>
+      '${_formatDate(dt)}  ${dt.hour.toString().padLeft(2, '0')}:${dt.minute.toString().padLeft(2, '0')}';
 
   void _save() {
     if (!_formKey.currentState!.validate()) {
       return;
     }
 
-    Navigator.of(context).pop(
-      HealthLog(
-        petName: _petName,
-        type: _type,
-        date: DateTime.now(),
-        note: _noteController.text.trim(),
-      ),
+    if (_type == LogType.vaccine && _nextDueDate == null) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(content: Text('Next due date is required')),
+      );
+      return;
+    }
+
+    final log = HealthLog(
+      petName: _selectedPet.name,
+      petId: _selectedPet.id,
+      type: _type,
+      date: _type == LogType.medication || _type == LogType.vaccine ? _medStartDate : _logDate,
+      note: _noteController.text.trim(),
+      weight: _type == LogType.weight ? double.tryParse(_weightController.text) : null,
+      weightUnit: _type == LogType.weight ? _weightUnit : null,
+      tags: _type == LogType.symptom ? _selectedTags.toList() : null,
+      medicationName: _type == LogType.medication ? _medicationNameController.text.trim() : null,
+      dose: _type == LogType.medication ? _doseController.text.trim() : null,
+      frequency: _type == LogType.medication ? _frequencyController.text.trim() : null,
+      vaccineName: _type == LogType.vaccine ? _vaccineNameController.text.trim() : null,
+      nextDueDate: _type == LogType.vaccine ? _nextDueDate : null,
+      endDate: _type == LogType.medication ? _medEndDate : null,
+      foodType: _type == LogType.diet ? _foodTypeController.text.trim() : null,
+      foodBrand: _type == LogType.diet ? _foodBrandController.text.trim() : null,
+      portionSize: _type == LogType.diet ? _portionSizeController.text.trim() : null,
+      portionUnit: _type == LogType.diet ? _portionUnitController.text.trim() : null,
     );
+
+    Navigator.of(context).pop(log);
   }
 
   @override
@@ -948,20 +1041,19 @@ class _AddLogSheetState extends State<AddLogSheet> {
         key: _formKey,
         child: Column(
           children: [
-            DropdownButtonFormField<String>(
+            DropdownButtonFormField<Pet>(
               key: const Key('log-pet-dropdown'),
-              initialValue: _petName,
+              initialValue: _selectedPet,
               decoration: const InputDecoration(labelText: 'Pet'),
               items: widget.pets
                   .map(
                     (pet) => DropdownMenuItem(
-                      value: pet.name,
+                      value: pet,
                       child: Text(pet.name),
                     ),
                   )
                   .toList(),
-              onChanged: (value) =>
-                  setState(() => _petName = value ?? _petName),
+              onChanged: (value) => setState(() => _selectedPet = value ?? _selectedPet),
             ),
             const SizedBox(height: 12),
             DropdownButtonFormField<LogType>(
@@ -969,24 +1061,211 @@ class _AddLogSheetState extends State<AddLogSheet> {
               decoration: const InputDecoration(labelText: 'Log type'),
               items: LogType.values
                   .map(
-                    (type) =>
-                        DropdownMenuItem(value: type, child: Text(type.label)),
+                    (type) => DropdownMenuItem(value: type, child: Text(type.label)),
                   )
                   .toList(),
               onChanged: (value) => setState(() => _type = value ?? _type),
             ),
             const SizedBox(height: 12),
-            TextFormField(
-              key: const Key('log-note-field'),
-              controller: _noteController,
-              decoration: const InputDecoration(labelText: 'Note'),
-              maxLines: 4,
-              validator: _required,
-            ),
+            if (_type == LogType.weight) ...[
+              TextFormField(
+                key: const Key('log-weight-field'),
+                controller: _weightController,
+                decoration: const InputDecoration(labelText: 'Weight'),
+                keyboardType: TextInputType.number,
+                validator: _required,
+              ),
+              const SizedBox(height: 12),
+              DropdownButtonFormField<String>(
+                initialValue: _weightUnit,
+                decoration: const InputDecoration(labelText: 'Unit'),
+                items: const [
+                  DropdownMenuItem(value: 'lb', child: Text('lb')),
+                  DropdownMenuItem(value: 'kg', child: Text('kg')),
+                ],
+                onChanged: (value) => setState(() => _weightUnit = value ?? 'lb'),
+              ),
+              const SizedBox(height: 12),
+              GestureDetector(
+                onTap: () async {
+                  final picked = await _pickDateTime(_logDate);
+                  if (picked != null) setState(() => _logDate = picked);
+                },
+                child: InputDecorator(
+                  decoration: const InputDecoration(labelText: 'Date & time'),
+                  child: Text(_formatDateTime(_logDate)),
+                ),
+              ),
+            ] else if (_type == LogType.symptom) ...[
+              Padding(
+                padding: const EdgeInsets.only(bottom: 12),
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    const Text('Symptoms'),
+                    const SizedBox(height: 8),
+                    Wrap(
+                      spacing: 8,
+                      children: _symptomTags.map((tag) {
+                        final selected = _selectedTags.contains(tag);
+                        return FilterChip(
+                          label: Text(tag),
+                          selected: selected,
+                          onSelected: (value) => setState(() {
+                            if (value) {
+                              _selectedTags.add(tag);
+                            } else {
+                              _selectedTags.remove(tag);
+                            }
+                          }),
+                        );
+                      }).toList(),
+                    ),
+                  ],
+                ),
+              ),
+              if (_selectedTags.isEmpty)
+                const Padding(
+                  padding: EdgeInsets.only(bottom: 12),
+                  child: Text('At least one symptom required', style: TextStyle(color: Colors.red, fontSize: 12)),
+                ),
+              const SizedBox(height: 12),
+              GestureDetector(
+                onTap: () async {
+                  final picked = await _pickDateTime(_logDate);
+                  if (picked != null) setState(() => _logDate = picked);
+                },
+                child: InputDecorator(
+                  decoration: const InputDecoration(labelText: 'Date & time'),
+                  child: Text(_formatDateTime(_logDate)),
+                ),
+              ),
+              const SizedBox(height: 12),
+              TextFormField(
+                controller: _noteController,
+                decoration: const InputDecoration(labelText: 'Additional notes (optional)'),
+                maxLines: 3,
+              ),
+            ] else if (_type == LogType.diet) ...[
+              TextFormField(
+                controller: _foodTypeController,
+                decoration: const InputDecoration(labelText: 'Food type (optional)'),
+              ),
+              const SizedBox(height: 12),
+              TextFormField(
+                controller: _foodBrandController,
+                decoration: const InputDecoration(labelText: 'Food brand (optional)'),
+              ),
+              const SizedBox(height: 12),
+              TextFormField(
+                controller: _portionSizeController,
+                decoration: const InputDecoration(labelText: 'Portion size (optional)'),
+                keyboardType: TextInputType.number,
+              ),
+              const SizedBox(height: 12),
+              TextFormField(
+                controller: _portionUnitController,
+                decoration: const InputDecoration(labelText: 'Portion unit (optional)'),
+              ),
+              const SizedBox(height: 12),
+              GestureDetector(
+                onTap: () async {
+                  final picked = await _pickDateTime(_logDate);
+                  if (picked != null) setState(() => _logDate = picked);
+                },
+                child: InputDecorator(
+                  decoration: const InputDecoration(labelText: 'Feeding time'),
+                  child: Text(_formatDateTime(_logDate)),
+                ),
+              ),
+            ] else if (_type == LogType.vaccine) ...[
+              TextFormField(
+                controller: _vaccineNameController,
+                decoration: const InputDecoration(labelText: 'Vaccine name'),
+                validator: _required,
+              ),
+              const SizedBox(height: 12),
+              GestureDetector(
+                onTap: () async {
+                  final picked = await _pickDate(_vaccineDate);
+                  if (picked != null) setState(() => _vaccineDate = picked);
+                },
+                child: InputDecorator(
+                  decoration: const InputDecoration(labelText: 'Date given'),
+                  child: Text(_formatDate(_vaccineDate)),
+                ),
+              ),
+              const SizedBox(height: 12),
+              GestureDetector(
+                onTap: () async {
+                  final picked = await _pickDate(_nextDueDate ?? DateTime.now().add(Duration(days: 365)));
+                  if (picked != null) setState(() => _nextDueDate = picked);
+                },
+                child: InputDecorator(
+                  decoration: InputDecoration(
+                    labelText: 'Next due date',
+                    errorText: _nextDueDate == null ? 'Required' : null,
+                  ),
+                  child: Text(_nextDueDate != null ? _formatDate(_nextDueDate!) : 'Tap to select'),
+                ),
+              ),
+              const SizedBox(height: 12),
+              TextFormField(
+                controller: _noteController,
+                decoration: const InputDecoration(labelText: 'Notes (optional)'),
+                maxLines: 3,
+              ),
+            ] else if (_type == LogType.medication) ...[
+              TextFormField(
+                controller: _medicationNameController,
+                decoration: const InputDecoration(labelText: 'Medication name'),
+                validator: _required,
+              ),
+              const SizedBox(height: 12),
+              TextFormField(
+                controller: _doseController,
+                decoration: const InputDecoration(labelText: 'Dose'),
+                validator: _required,
+              ),
+              const SizedBox(height: 12),
+              TextFormField(
+                controller: _frequencyController,
+                decoration: const InputDecoration(labelText: 'Frequency'),
+                validator: _required,
+              ),
+              const SizedBox(height: 12),
+              GestureDetector(
+                onTap: () async {
+                  final picked = await _pickDate(_medStartDate);
+                  if (picked != null) setState(() => _medStartDate = picked);
+                },
+                child: InputDecorator(
+                  decoration: const InputDecoration(labelText: 'Start date'),
+                  child: Text(_formatDate(_medStartDate)),
+                ),
+              ),
+              const SizedBox(height: 12),
+              GestureDetector(
+                onTap: () async {
+                  final picked = await _pickDate(_medEndDate ?? DateTime.now().add(Duration(days: 30)));
+                  if (picked != null) setState(() => _medEndDate = picked);
+                },
+                child: InputDecorator(
+                  decoration: const InputDecoration(labelText: 'End date (optional)'),
+                  child: Text(_medEndDate != null ? _formatDate(_medEndDate!) : 'Tap to select'),
+                ),
+              ),
+              const SizedBox(height: 12),
+              TextFormField(
+                controller: _noteController,
+                decoration: const InputDecoration(labelText: 'Notes (optional)'),
+                maxLines: 3,
+              ),
+            ],
             const SizedBox(height: 16),
             FilledButton.icon(
               key: const Key('save-log'),
-              onPressed: _save,
+              onPressed: _type == LogType.symptom && _selectedTags.isEmpty ? null : _save,
               icon: const Icon(Icons.save_outlined),
               label: const Text('Save log'),
             ),
@@ -1044,6 +1323,17 @@ class HealthLog {
   final String note;
   final double? weight;
   final String? weightUnit;
+  final List<String>? tags;
+  final String? medicationName;
+  final String? dose;
+  final String? frequency;
+  final DateTime? endDate;
+  final String? vaccineName;
+  final DateTime? nextDueDate;
+  final String? foodType;
+  final String? foodBrand;
+  final String? portionSize;
+  final String? portionUnit;
 
   HealthLog({
     this.id,
@@ -1054,6 +1344,17 @@ class HealthLog {
     required this.note,
     this.weight,
     this.weightUnit = 'lb',
+    this.tags,
+    this.medicationName,
+    this.dose,
+    this.frequency,
+    this.endDate,
+    this.vaccineName,
+    this.nextDueDate,
+    this.foodType,
+    this.foodBrand,
+    this.portionSize,
+    this.portionUnit,
   });
 
   factory HealthLog.fromMap(LogType logType, Map<String, dynamic> map, String petName) {
@@ -1061,6 +1362,17 @@ class HealthLog {
     String note = '';
     double? weight;
     String? weightUnit;
+    List<String>? tags;
+    String? medicationName;
+    String? dose;
+    String? frequency;
+    DateTime? endDate;
+    String? vaccineName;
+    DateTime? nextDueDate;
+    String? foodType;
+    String? foodBrand;
+    String? portionSize;
+    String? portionUnit;
 
     switch (logType) {
       case LogType.weight:
@@ -1071,17 +1383,28 @@ class HealthLog {
       case LogType.symptom:
         date = DateTime.parse(map['recorded_at'] as String);
         note = map['notes'] as String? ?? '';
+        tags = (map['tags'] as List?)?.cast<String>();
         break;
       case LogType.diet:
         date = DateTime.parse(map['fed_at'] as String);
+        foodType = map['food_type'] as String?;
+        foodBrand = map['food_brand'] as String?;
+        portionSize = map['portion_size']?.toString();
+        portionUnit = map['portion_unit'] as String?;
         note = '${map['food_type'] ?? ''} ${map['food_brand'] ?? ''}'.trim();
         break;
       case LogType.vaccine:
         date = DateTime.parse(map['date_administered'] as String);
+        vaccineName = map['name'] as String?;
+        nextDueDate = map['next_due_date'] != null ? DateTime.parse(map['next_due_date'] as String) : null;
         note = map['notes'] as String? ?? '';
         break;
       case LogType.medication:
         date = DateTime.parse(map['start_date'] as String);
+        medicationName = map['name'] as String?;
+        dose = map['dose'] as String?;
+        frequency = map['frequency'] as String?;
+        endDate = map['end_date'] != null ? DateTime.parse(map['end_date'] as String) : null;
         note = map['notes'] as String? ?? '';
         break;
     }
@@ -1095,6 +1418,17 @@ class HealthLog {
       note: note,
       weight: weight,
       weightUnit: weightUnit,
+      tags: tags,
+      medicationName: medicationName,
+      dose: dose,
+      frequency: frequency,
+      endDate: endDate,
+      vaccineName: vaccineName,
+      nextDueDate: nextDueDate,
+      foodType: foodType,
+      foodBrand: foodBrand,
+      portionSize: portionSize,
+      portionUnit: portionUnit,
     );
   }
 
@@ -1108,18 +1442,29 @@ class HealthLog {
         break;
       case LogType.symptom:
         map['recorded_at'] = date.toIso8601String();
-        map['notes'] = note;
+        map['tags'] = tags;
+        if (note.isNotEmpty) map['notes'] = note;
         break;
       case LogType.diet:
         map['fed_at'] = date.toIso8601String();
+        if (foodType != null) map['food_type'] = foodType;
+        if (foodBrand != null) map['food_brand'] = foodBrand;
+        if (portionSize != null) map['portion_size'] = portionSize;
+        if (portionUnit != null) map['portion_unit'] = portionUnit;
         break;
       case LogType.vaccine:
         map['date_administered'] = date.toIso8601String();
-        map['notes'] = note;
+        map['name'] = vaccineName;
+        map['next_due_date'] = nextDueDate?.toIso8601String();
+        if (note.isNotEmpty) map['notes'] = note;
         break;
       case LogType.medication:
         map['start_date'] = date.toIso8601String();
-        map['notes'] = note;
+        map['name'] = medicationName;
+        map['dose'] = dose;
+        map['frequency'] = frequency;
+        if (endDate != null) map['end_date'] = endDate!.toIso8601String();
+        if (note.isNotEmpty) map['notes'] = note;
         break;
     }
     return map;
@@ -1336,13 +1681,43 @@ class HealthLogTile extends StatelessWidget {
 
   final HealthLog log;
 
+  String _buildSubtitle() {
+    final dateLine = _formatDate(log.date);
+    String detailLine;
+
+    switch (log.type) {
+      case LogType.weight:
+        detailLine = '${log.weight} ${log.weightUnit}';
+      case LogType.symptom:
+        final tags = log.tags?.join(', ') ?? '';
+        final notes = log.note.isNotEmpty ? '\n${log.note}' : '';
+        detailLine = tags + notes;
+      case LogType.diet:
+        final brand = log.foodBrand ?? '';
+        final size = log.portionSize ?? '';
+        final unit = log.portionUnit ?? '';
+        if (brand.isNotEmpty || size.isNotEmpty) {
+          detailLine = '$brand ${size.isNotEmpty ? '$size $unit' : ''}'.trim();
+        } else {
+          detailLine = 'Diet entry';
+        }
+      case LogType.vaccine:
+        final nextDue = log.nextDueDate != null ? _formatDate(log.nextDueDate!) : 'N/A';
+        detailLine = '${log.vaccineName} • Next due: $nextDue';
+      case LogType.medication:
+        detailLine = '${log.medicationName} • ${log.dose} • ${log.frequency}';
+    }
+
+    return '$dateLine\n$detailLine';
+  }
+
   @override
   Widget build(BuildContext context) {
     return Card(
       child: ListTile(
         leading: Icon(log.type.icon),
         title: Text('${log.petName} • ${log.type.label}'),
-        subtitle: Text('${_formatDate(log.date)}\n${log.note}'),
+        subtitle: Text(_buildSubtitle()),
         isThreeLine: true,
       ),
     );
