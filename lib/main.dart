@@ -525,7 +525,6 @@ class _AppShellState extends State<AppShell> {
   int _selectedIndex = 0;
   late List<Pet> _pets = [];
   late List<HealthLog> _logs = [];
-  late List<CareTask> _tasks = [];
   bool _isLoading = true;
 
   @override
@@ -541,8 +540,6 @@ class _AppShellState extends State<AppShell> {
       setState(() {
         _pets = pets;
         _logs = logs;
-        // TODO: create care_tasks table in Supabase and persist CareTask
-        _tasks = [];
         _isLoading = false;
       });
     } catch (e) {
@@ -558,21 +555,18 @@ class _AppShellState extends State<AppShell> {
   String get _title => switch (_selectedIndex) {
     0 => 'Pets',
     1 => 'Logs',
-    2 => 'Care',
     _ => 'Insights',
   };
 
   String get _actionTooltip => switch (_selectedIndex) {
     0 => 'Add pet',
     1 => 'Add log',
-    2 => 'Add care reminder',
     _ => 'Add log',
   };
 
   IconData get _actionIcon => switch (_selectedIndex) {
     0 => Icons.add_circle_outline,
     1 => Icons.note_add_outlined,
-    2 => Icons.add_alarm_outlined,
     _ => Icons.note_add_outlined,
   };
 
@@ -587,8 +581,6 @@ class _AppShellState extends State<AppShell> {
         _showAddPetSheet();
       case 1:
         _showAddLogSheet();
-      case 2:
-        _showAddTaskSheet();
       default:
         _showAddLogSheet();
     }
@@ -618,18 +610,6 @@ class _AppShellState extends State<AppShell> {
     }
   }
 
-  Future<void> _showAddTaskSheet() async {
-    final task = await showModalBottomSheet<CareTask>(
-      context: context,
-      isScrollControlled: true,
-      builder: (_) => AddCareTaskSheet(pets: _pets),
-    );
-
-    if (task != null) {
-      setState(() => _tasks.insert(0, task));
-    }
-  }
-
   @override
   Widget build(BuildContext context) {
     return Scaffold(
@@ -651,14 +631,7 @@ class _AppShellState extends State<AppShell> {
         children: [
           PetsPage(pets: _pets, logs: _logs, onAddPet: _showAddPetSheet),
           LogsPage(logs: _logs, pets: _pets, onAddLog: _showAddLogSheet),
-          CarePage(
-            tasks: _tasks,
-            onAddTask: _showAddTaskSheet,
-            onToggleTask: (index, value) {
-              setState(() => _tasks[index].completed = value);
-            },
-          ),
-          InsightsPage(logs: _logs, tasks: _tasks, onAddLog: _showAddLogSheet),
+          InsightsPage(logs: _logs, onAddLog: _showAddLogSheet),
         ],
       ),
       floatingActionButton: FloatingActionButton.extended(
@@ -681,11 +654,6 @@ class _AppShellState extends State<AppShell> {
             icon: Icon(Icons.event_note_outlined),
             selectedIcon: Icon(Icons.event_note),
             label: 'Logs',
-          ),
-          NavigationDestination(
-            icon: Icon(Icons.notifications_outlined),
-            selectedIcon: Icon(Icons.notifications),
-            label: 'Care',
           ),
           NavigationDestination(
             icon: Icon(Icons.insights_outlined),
@@ -783,67 +751,18 @@ class LogsPage extends StatelessWidget {
   }
 }
 
-class CarePage extends StatelessWidget {
-  const CarePage({
-    required this.tasks,
-    required this.onAddTask,
-    required this.onToggleTask,
-    super.key,
-  });
-
-  final List<CareTask> tasks;
-  final VoidCallback onAddTask;
-  final void Function(int index, bool value) onToggleTask;
-
-  @override
-  Widget build(BuildContext context) {
-    return PageScaffold(
-      children: [
-        PageIntro(
-          title: 'Care reminders',
-          body: 'Track the next medication, vaccine, feeding, or appointment.',
-          actionLabel: 'Add reminder',
-          onAction: onAddTask,
-        ),
-        if (tasks.isEmpty)
-          EmptyState(
-            icon: Icons.notifications_outlined,
-            title: 'No care tasks',
-            body: 'Create a reminder so care routines do not get missed.',
-            actionLabel: 'Add reminder',
-            onAction: onAddTask,
-          )
-        else
-          ...tasks.indexed.map((entry) {
-            final (index, task) = entry;
-            return Padding(
-              padding: const EdgeInsets.only(bottom: 10),
-              child: CareTaskTile(
-                task: task,
-                onChanged: (value) => onToggleTask(index, value ?? false),
-              ),
-            );
-          }),
-      ],
-    );
-  }
-}
-
 class InsightsPage extends StatelessWidget {
   const InsightsPage({
     required this.logs,
-    required this.tasks,
     required this.onAddLog,
     super.key,
   });
 
   final List<HealthLog> logs;
-  final List<CareTask> tasks;
   final VoidCallback onAddLog;
 
   @override
   Widget build(BuildContext context) {
-    final openTasks = tasks.where((task) => !task.completed).length;
     final weightLogs = logs.where((log) => log.type == LogType.weight).length;
     final symptomLogs = logs.where((log) => log.type == LogType.symptom).length;
 
@@ -856,12 +775,6 @@ class InsightsPage extends StatelessWidget {
           actionLabel: 'Add log',
           onAction: onAddLog,
         ),
-        PatternFlagCard(
-          title: '$openTasks open care reminders',
-          body:
-              'Observation from your logs: unfinished tasks may need attention today. Confirm care timing with your vet.',
-        ),
-        const SizedBox(height: 12),
         PatternFlagCard(
           title: '$weightLogs weight entries tracked',
           body:
@@ -1067,89 +980,6 @@ class _AddLogSheetState extends State<AddLogSheet> {
   }
 }
 
-class AddCareTaskSheet extends StatefulWidget {
-  const AddCareTaskSheet({required this.pets, super.key});
-
-  final List<Pet> pets;
-
-  @override
-  State<AddCareTaskSheet> createState() => _AddCareTaskSheetState();
-}
-
-class _AddCareTaskSheetState extends State<AddCareTaskSheet> {
-  final _formKey = GlobalKey<FormState>();
-  final _titleController = TextEditingController();
-  final _dueController = TextEditingController();
-  late String _petName = widget.pets.first.name;
-
-  @override
-  void dispose() {
-    _titleController.dispose();
-    _dueController.dispose();
-    super.dispose();
-  }
-
-  void _save() {
-    if (!_formKey.currentState!.validate()) {
-      return;
-    }
-
-    Navigator.of(context).pop(
-      CareTask(
-        petName: _petName,
-        title: _titleController.text.trim(),
-        dueText: _dueController.text.trim(),
-      ),
-    );
-  }
-
-  @override
-  Widget build(BuildContext context) {
-    return FormSheet(
-      title: 'Add care reminder',
-      child: Form(
-        key: _formKey,
-        child: Column(
-          children: [
-            DropdownButtonFormField<String>(
-              initialValue: _petName,
-              decoration: const InputDecoration(labelText: 'Pet'),
-              items: widget.pets
-                  .map(
-                    (pet) => DropdownMenuItem(
-                      value: pet.name,
-                      child: Text(pet.name),
-                    ),
-                  )
-                  .toList(),
-              onChanged: (value) =>
-                  setState(() => _petName = value ?? _petName),
-            ),
-            const SizedBox(height: 12),
-            TextFormField(
-              controller: _titleController,
-              decoration: const InputDecoration(labelText: 'Task'),
-              validator: _required,
-            ),
-            const SizedBox(height: 12),
-            TextFormField(
-              controller: _dueController,
-              decoration: const InputDecoration(labelText: 'Due'),
-              validator: _required,
-            ),
-            const SizedBox(height: 16),
-            FilledButton.icon(
-              onPressed: _save,
-              icon: const Icon(Icons.save_outlined),
-              label: const Text('Save reminder'),
-            ),
-          ],
-        ),
-      ),
-    );
-  }
-}
-
 class Pet {
   final String? id;
   final String? ownerId;
@@ -1278,20 +1108,6 @@ class HealthLog {
     }
     return map;
   }
-}
-
-class CareTask {
-  CareTask({
-    required this.petName,
-    required this.title,
-    required this.dueText,
-    this.completed = false,
-  });
-
-  final String petName;
-  final String title;
-  final String dueText;
-  bool completed;
 }
 
 enum LogType { weight, symptom, diet, vaccine, medication }
@@ -1512,26 +1328,6 @@ class HealthLogTile extends StatelessWidget {
         title: Text('${log.petName} • ${log.type.label}'),
         subtitle: Text('${_formatDate(log.date)}\n${log.note}'),
         isThreeLine: true,
-      ),
-    );
-  }
-}
-
-class CareTaskTile extends StatelessWidget {
-  const CareTaskTile({required this.task, required this.onChanged, super.key});
-
-  final CareTask task;
-  final ValueChanged<bool?> onChanged;
-
-  @override
-  Widget build(BuildContext context) {
-    return Card(
-      child: CheckboxListTile(
-        value: task.completed,
-        onChanged: onChanged,
-        title: Text(task.title),
-        subtitle: Text('${task.petName} • ${task.dueText}'),
-        secondary: const Icon(Icons.notifications_outlined),
       ),
     );
   }

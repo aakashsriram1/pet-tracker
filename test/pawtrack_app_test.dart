@@ -28,10 +28,6 @@ void main() {
     await tester.pumpAndSettle();
     expect(find.text('Health logs'), findsOneWidget);
 
-    await tester.tap(find.text('Care'));
-    await tester.pumpAndSettle();
-    expect(find.text('Care reminders'), findsOneWidget);
-
     await tester.tap(find.text('Insights'));
     await tester.pumpAndSettle();
     expect(find.text('Pattern flags'), findsOneWidget);
