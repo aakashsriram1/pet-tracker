@@ -596,8 +596,17 @@ class _AppShellState extends State<AppShell> {
       builder: (_) => const AddPetSheet(),
     );
 
-    if (pet != null) {
-      setState(() => _pets.add(pet));
+    if (pet == null) return;
+
+    try {
+      final saved = await widget.db.insertPet(pet);
+      setState(() => _pets.add(saved));
+    } catch (e) {
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(content: Text('Failed to save pet. Please try again.')),
+        );
+      }
     }
   }
 
@@ -1016,8 +1025,7 @@ class Pet {
       'name': name,
       'breed': breed,
       'type': type,
-      // TODO: add notes column to pets table
-      // TODO: add birth_date picker to AddPetSheet
+      if (notes != null) 'notes': notes,
     };
   }
 }
