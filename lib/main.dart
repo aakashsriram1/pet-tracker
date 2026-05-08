@@ -1,13 +1,10 @@
 import 'dart:async';
 
 import 'package:flutter/material.dart';
-import 'package:flutter_dotenv/flutter_dotenv.dart';
 import 'package:supabase_flutter/supabase_flutter.dart';
 
 Future<void> main() async {
   WidgetsFlutterBinding.ensureInitialized();
-
-  await dotenv.load();
 
   final authService = await SupabasePawTrackAuth.bootstrap();
   runApp(PawTrackApp(authService: authService));
@@ -65,8 +62,8 @@ class SupabasePawTrackAuth implements PawTrackAuth {
   final SupabaseClient? _client;
 
   static Future<SupabasePawTrackAuth> bootstrap() async {
-    final supabaseUrl = dotenv.env['SUPABASE_URL'] ?? '';
-    final supabaseAnonKey = dotenv.env['SUPABASE_ANON_KEY'] ?? '';
+    const supabaseUrl = String.fromEnvironment('SUPABASE_URL');
+    const supabaseAnonKey = String.fromEnvironment('SUPABASE_ANON_KEY');
 
     if (supabaseUrl.isEmpty || supabaseAnonKey.isEmpty) {
       return SupabasePawTrackAuth._(null);
@@ -142,10 +139,15 @@ class PawTrackDatabase implements PawTrackDatabaseI {
   @override
   Future<List<Pet>> fetchPets() async {
     try {
-      final response = await _client.from('pets').select().order('created_at', ascending: false);
-      return (response as List).map((row) => Pet.fromMap(row as Map<String, dynamic>)).toList();
+      final response = await _client
+          .from('pets')
+          .select()
+          .order('created_at', ascending: false);
+      return (response as List)
+          .map((row) => Pet.fromMap(row as Map<String, dynamic>))
+          .toList();
     } catch (e) {
-      print('Error fetching pets: $e');
+      debugPrint('Error fetching pets: $e');
       return [];
     }
   }
@@ -154,10 +156,14 @@ class PawTrackDatabase implements PawTrackDatabaseI {
   Future<Pet> insertPet(Pet pet) async {
     try {
       final data = pet.toMap();
-      final response = await _client.from('pets').insert(data).select().single();
-      return Pet.fromMap(response as Map<String, dynamic>);
+      final response = await _client
+          .from('pets')
+          .insert(data)
+          .select()
+          .single();
+      return Pet.fromMap(response);
     } catch (e) {
-      print('Error inserting pet: $e');
+      debugPrint('Error inserting pet: $e');
       rethrow;
     }
   }
@@ -176,22 +182,25 @@ class PawTrackDatabase implements PawTrackDatabaseI {
       ];
       for (final (table, timeCol, logType) in tables) {
         try {
-          final response = await _client.from(table).select().order(timeCol, ascending: false);
+          final response = await _client
+              .from(table)
+              .select()
+              .order(timeCol, ascending: false);
           for (final row in response as List) {
             final petId = (row as Map<String, dynamic>)['pet_id'] as String;
             final pet = pets.where((p) => p.id == petId).firstOrNull;
             if (pet != null) {
-              allLogs.add(HealthLog.fromMap(logType, row as Map<String, dynamic>, pet.name));
+              allLogs.add(HealthLog.fromMap(logType, row, pet.name));
             }
           }
         } catch (e) {
-          print('Error fetching logs from $table: $e');
+          debugPrint('Error fetching logs from $table: $e');
         }
       }
       allLogs.sort((a, b) => b.date.compareTo(a.date));
       return allLogs;
     } catch (e) {
-      print('Error fetching logs: $e');
+      debugPrint('Error fetching logs: $e');
       return [];
     }
   }
@@ -204,18 +213,23 @@ class PawTrackDatabase implements PawTrackDatabaseI {
       final data = log.toInsertMap();
       await _client.from(table).insert(data);
     } catch (e) {
-      print('Error inserting log: $e');
+      debugPrint('Error inserting log: $e');
       rethrow;
     }
   }
 
   String _logTable(LogType type) {
     switch (type) {
-      case LogType.weight: return 'weight_entries';
-      case LogType.symptom: return 'symptoms';
-      case LogType.diet: return 'diet_entries';
-      case LogType.vaccine: return 'vaccinations';
-      case LogType.medication: return 'medications';
+      case LogType.weight:
+        return 'weight_entries';
+      case LogType.symptom:
+        return 'symptoms';
+      case LogType.diet:
+        return 'diet_entries';
+      case LogType.vaccine:
+        return 'vaccinations';
+      case LogType.medication:
+        return 'medications';
     }
   }
 }
@@ -517,11 +531,7 @@ class _LoginScreenState extends State<LoginScreen> {
 }
 
 class AppShell extends StatefulWidget {
-  const AppShell({
-    required this.db,
-    required this.authService,
-    super.key,
-  });
+  const AppShell({required this.db, required this.authService, super.key});
 
   final PawTrackDatabaseI db;
   final PawTrackAuth authService;
@@ -553,9 +563,9 @@ class _AppShellState extends State<AppShell> {
       });
     } catch (e) {
       if (mounted) {
-        ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(content: Text('Error loading data: $e')),
-        );
+        ScaffoldMessenger.of(
+          context,
+        ).showSnackBar(SnackBar(content: Text('Error loading data: $e')));
         setState(() => _isLoading = false);
       }
     }
@@ -609,7 +619,9 @@ class _AppShellState extends State<AppShell> {
     } catch (e) {
       if (mounted) {
         ScaffoldMessenger.of(context).showSnackBar(
-          const SnackBar(content: Text('Failed to save pet. Please try again.')),
+          const SnackBar(
+            content: Text('Failed to save pet. Please try again.'),
+          ),
         );
       }
     }
@@ -630,7 +642,9 @@ class _AppShellState extends State<AppShell> {
     } catch (e) {
       if (mounted) {
         ScaffoldMessenger.of(context).showSnackBar(
-          const SnackBar(content: Text('Failed to save log. Please try again.')),
+          const SnackBar(
+            content: Text('Failed to save log. Please try again.'),
+          ),
         );
       }
     }
@@ -653,13 +667,13 @@ class _AppShellState extends State<AppShell> {
       body: _isLoading
           ? const Center(child: CircularProgressIndicator())
           : IndexedStack(
-        index: _selectedIndex,
-        children: [
-          PetsPage(pets: _pets, logs: _logs, onAddPet: _showAddPetSheet),
-          LogsPage(logs: _logs, pets: _pets, onAddLog: _showAddLogSheet),
-          InsightsPage(logs: _logs, onAddLog: _showAddLogSheet),
-        ],
-      ),
+              index: _selectedIndex,
+              children: [
+                PetsPage(pets: _pets, logs: _logs, onAddPet: _showAddPetSheet),
+                LogsPage(logs: _logs, pets: _pets, onAddLog: _showAddLogSheet),
+                InsightsPage(logs: _logs, onAddLog: _showAddLogSheet),
+              ],
+            ),
       floatingActionButton: FloatingActionButton.extended(
         tooltip: _actionTooltip,
         onPressed: _handlePrimaryAction,
@@ -778,11 +792,7 @@ class LogsPage extends StatelessWidget {
 }
 
 class InsightsPage extends StatelessWidget {
-  const InsightsPage({
-    required this.logs,
-    required this.onAddLog,
-    super.key,
-  });
+  const InsightsPage({required this.logs, required this.onAddLog, super.key});
 
   final List<HealthLog> logs;
   final VoidCallback onAddLog;
@@ -942,12 +952,22 @@ class _AddLogSheetState extends State<AddLogSheet> {
 
   String _weightUnit = 'lb';
   final Set<String> _selectedTags = {};
-  final _symptomTags = ['vomiting', 'lethargy', 'appetite loss', 'diarrhea', 'coughing', 'sneezing', 'limping'];
+  final _symptomTags = [
+    'vomiting',
+    'lethargy',
+    'appetite loss',
+    'diarrhea',
+    'coughing',
+    'sneezing',
+    'limping',
+  ];
 
   @override
   void initState() {
     super.initState();
-    _selectedPet = widget.pets.isNotEmpty ? widget.pets.first : Pet(name: '', breed: '', type: 'Dog');
+    _selectedPet = widget.pets.isNotEmpty
+        ? widget.pets.first
+        : Pet(name: '', breed: '', type: 'Dog');
   }
 
   @override
@@ -1013,21 +1033,39 @@ class _AddLogSheetState extends State<AddLogSheet> {
       petName: _selectedPet.name,
       petId: _selectedPet.id,
       type: _type,
-      date: _type == LogType.medication || _type == LogType.vaccine ? _medStartDate : _logDate,
+      date: _type == LogType.medication
+          ? _medStartDate
+          : _type == LogType.vaccine
+          ? _vaccineDate
+          : _logDate,
       note: _noteController.text.trim(),
-      weight: _type == LogType.weight ? double.tryParse(_weightController.text) : null,
+      weight: _type == LogType.weight
+          ? double.tryParse(_weightController.text)
+          : null,
       weightUnit: _type == LogType.weight ? _weightUnit : null,
       tags: _type == LogType.symptom ? _selectedTags.toList() : null,
-      medicationName: _type == LogType.medication ? _medicationNameController.text.trim() : null,
+      medicationName: _type == LogType.medication
+          ? _medicationNameController.text.trim()
+          : null,
       dose: _type == LogType.medication ? _doseController.text.trim() : null,
-      frequency: _type == LogType.medication ? _frequencyController.text.trim() : null,
-      vaccineName: _type == LogType.vaccine ? _vaccineNameController.text.trim() : null,
+      frequency: _type == LogType.medication
+          ? _frequencyController.text.trim()
+          : null,
+      vaccineName: _type == LogType.vaccine
+          ? _vaccineNameController.text.trim()
+          : null,
       nextDueDate: _type == LogType.vaccine ? _nextDueDate : null,
       endDate: _type == LogType.medication ? _medEndDate : null,
       foodType: _type == LogType.diet ? _foodTypeController.text.trim() : null,
-      foodBrand: _type == LogType.diet ? _foodBrandController.text.trim() : null,
-      portionSize: _type == LogType.diet ? _portionSizeController.text.trim() : null,
-      portionUnit: _type == LogType.diet ? _portionUnitController.text.trim() : null,
+      foodBrand: _type == LogType.diet
+          ? _foodBrandController.text.trim()
+          : null,
+      portionSize: _type == LogType.diet
+          ? _portionSizeController.text.trim()
+          : null,
+      portionUnit: _type == LogType.diet
+          ? _portionUnitController.text.trim()
+          : null,
     );
 
     Navigator.of(context).pop(log);
@@ -1047,13 +1085,12 @@ class _AddLogSheetState extends State<AddLogSheet> {
               decoration: const InputDecoration(labelText: 'Pet'),
               items: widget.pets
                   .map(
-                    (pet) => DropdownMenuItem(
-                      value: pet,
-                      child: Text(pet.name),
-                    ),
+                    (pet) =>
+                        DropdownMenuItem(value: pet, child: Text(pet.name)),
                   )
                   .toList(),
-              onChanged: (value) => setState(() => _selectedPet = value ?? _selectedPet),
+              onChanged: (value) =>
+                  setState(() => _selectedPet = value ?? _selectedPet),
             ),
             const SizedBox(height: 12),
             DropdownButtonFormField<LogType>(
@@ -1061,7 +1098,8 @@ class _AddLogSheetState extends State<AddLogSheet> {
               decoration: const InputDecoration(labelText: 'Log type'),
               items: LogType.values
                   .map(
-                    (type) => DropdownMenuItem(value: type, child: Text(type.label)),
+                    (type) =>
+                        DropdownMenuItem(value: type, child: Text(type.label)),
                   )
                   .toList(),
               onChanged: (value) => setState(() => _type = value ?? _type),
@@ -1083,7 +1121,8 @@ class _AddLogSheetState extends State<AddLogSheet> {
                   DropdownMenuItem(value: 'lb', child: Text('lb')),
                   DropdownMenuItem(value: 'kg', child: Text('kg')),
                 ],
-                onChanged: (value) => setState(() => _weightUnit = value ?? 'lb'),
+                onChanged: (value) =>
+                    setState(() => _weightUnit = value ?? 'lb'),
               ),
               const SizedBox(height: 12),
               GestureDetector(
@@ -1127,7 +1166,10 @@ class _AddLogSheetState extends State<AddLogSheet> {
               if (_selectedTags.isEmpty)
                 const Padding(
                   padding: EdgeInsets.only(bottom: 12),
-                  child: Text('At least one symptom required', style: TextStyle(color: Colors.red, fontSize: 12)),
+                  child: Text(
+                    'At least one symptom required',
+                    style: TextStyle(color: Colors.red, fontSize: 12),
+                  ),
                 ),
               const SizedBox(height: 12),
               GestureDetector(
@@ -1143,29 +1185,39 @@ class _AddLogSheetState extends State<AddLogSheet> {
               const SizedBox(height: 12),
               TextFormField(
                 controller: _noteController,
-                decoration: const InputDecoration(labelText: 'Additional notes (optional)'),
+                decoration: const InputDecoration(
+                  labelText: 'Additional notes (optional)',
+                ),
                 maxLines: 3,
               ),
             ] else if (_type == LogType.diet) ...[
               TextFormField(
                 controller: _foodTypeController,
-                decoration: const InputDecoration(labelText: 'Food type (optional)'),
+                decoration: const InputDecoration(
+                  labelText: 'Food type (optional)',
+                ),
               ),
               const SizedBox(height: 12),
               TextFormField(
                 controller: _foodBrandController,
-                decoration: const InputDecoration(labelText: 'Food brand (optional)'),
+                decoration: const InputDecoration(
+                  labelText: 'Food brand (optional)',
+                ),
               ),
               const SizedBox(height: 12),
               TextFormField(
                 controller: _portionSizeController,
-                decoration: const InputDecoration(labelText: 'Portion size (optional)'),
+                decoration: const InputDecoration(
+                  labelText: 'Portion size (optional)',
+                ),
                 keyboardType: TextInputType.number,
               ),
               const SizedBox(height: 12),
               TextFormField(
                 controller: _portionUnitController,
-                decoration: const InputDecoration(labelText: 'Portion unit (optional)'),
+                decoration: const InputDecoration(
+                  labelText: 'Portion unit (optional)',
+                ),
               ),
               const SizedBox(height: 12),
               GestureDetector(
@@ -1198,7 +1250,9 @@ class _AddLogSheetState extends State<AddLogSheet> {
               const SizedBox(height: 12),
               GestureDetector(
                 onTap: () async {
-                  final picked = await _pickDate(_nextDueDate ?? DateTime.now().add(Duration(days: 365)));
+                  final picked = await _pickDate(
+                    _nextDueDate ?? DateTime.now().add(Duration(days: 365)),
+                  );
                   if (picked != null) setState(() => _nextDueDate = picked);
                 },
                 child: InputDecorator(
@@ -1206,13 +1260,19 @@ class _AddLogSheetState extends State<AddLogSheet> {
                     labelText: 'Next due date',
                     errorText: _nextDueDate == null ? 'Required' : null,
                   ),
-                  child: Text(_nextDueDate != null ? _formatDate(_nextDueDate!) : 'Tap to select'),
+                  child: Text(
+                    _nextDueDate != null
+                        ? _formatDate(_nextDueDate!)
+                        : 'Tap to select',
+                  ),
                 ),
               ),
               const SizedBox(height: 12),
               TextFormField(
                 controller: _noteController,
-                decoration: const InputDecoration(labelText: 'Notes (optional)'),
+                decoration: const InputDecoration(
+                  labelText: 'Notes (optional)',
+                ),
                 maxLines: 3,
               ),
             ] else if (_type == LogType.medication) ...[
@@ -1247,25 +1307,37 @@ class _AddLogSheetState extends State<AddLogSheet> {
               const SizedBox(height: 12),
               GestureDetector(
                 onTap: () async {
-                  final picked = await _pickDate(_medEndDate ?? DateTime.now().add(Duration(days: 30)));
+                  final picked = await _pickDate(
+                    _medEndDate ?? DateTime.now().add(Duration(days: 30)),
+                  );
                   if (picked != null) setState(() => _medEndDate = picked);
                 },
                 child: InputDecorator(
-                  decoration: const InputDecoration(labelText: 'End date (optional)'),
-                  child: Text(_medEndDate != null ? _formatDate(_medEndDate!) : 'Tap to select'),
+                  decoration: const InputDecoration(
+                    labelText: 'End date (optional)',
+                  ),
+                  child: Text(
+                    _medEndDate != null
+                        ? _formatDate(_medEndDate!)
+                        : 'Tap to select',
+                  ),
                 ),
               ),
               const SizedBox(height: 12),
               TextFormField(
                 controller: _noteController,
-                decoration: const InputDecoration(labelText: 'Notes (optional)'),
+                decoration: const InputDecoration(
+                  labelText: 'Notes (optional)',
+                ),
                 maxLines: 3,
               ),
             ],
             const SizedBox(height: 16),
             FilledButton.icon(
               key: const Key('save-log'),
-              onPressed: _type == LogType.symptom && _selectedTags.isEmpty ? null : _save,
+              onPressed: _type == LogType.symptom && _selectedTags.isEmpty
+                  ? null
+                  : _save,
               icon: const Icon(Icons.save_outlined),
               label: const Text('Save log'),
             ),
@@ -1357,7 +1429,11 @@ class HealthLog {
     this.portionUnit,
   });
 
-  factory HealthLog.fromMap(LogType logType, Map<String, dynamic> map, String petName) {
+  factory HealthLog.fromMap(
+    LogType logType,
+    Map<String, dynamic> map,
+    String petName,
+  ) {
     DateTime date;
     String note = '';
     double? weight;
@@ -1396,7 +1472,9 @@ class HealthLog {
       case LogType.vaccine:
         date = DateTime.parse(map['date_administered'] as String);
         vaccineName = map['name'] as String?;
-        nextDueDate = map['next_due_date'] != null ? DateTime.parse(map['next_due_date'] as String) : null;
+        nextDueDate = map['next_due_date'] != null
+            ? DateTime.parse(map['next_due_date'] as String)
+            : null;
         note = map['notes'] as String? ?? '';
         break;
       case LogType.medication:
@@ -1404,7 +1482,9 @@ class HealthLog {
         medicationName = map['name'] as String?;
         dose = map['dose'] as String?;
         frequency = map['frequency'] as String?;
-        endDate = map['end_date'] != null ? DateTime.parse(map['end_date'] as String) : null;
+        endDate = map['end_date'] != null
+            ? DateTime.parse(map['end_date'] as String)
+            : null;
         note = map['notes'] as String? ?? '';
         break;
     }
@@ -1702,7 +1782,9 @@ class HealthLogTile extends StatelessWidget {
           detailLine = 'Diet entry';
         }
       case LogType.vaccine:
-        final nextDue = log.nextDueDate != null ? _formatDate(log.nextDueDate!) : 'N/A';
+        final nextDue = log.nextDueDate != null
+            ? _formatDate(log.nextDueDate!)
+            : 'N/A';
         detailLine = '${log.vaccineName} • Next due: $nextDue';
       case LogType.medication:
         detailLine = '${log.medicationName} • ${log.dose} • ${log.frequency}';
